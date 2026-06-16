@@ -12,10 +12,10 @@
 
   ## Understanding
 
-  The service must support wallet-to-wallet transfers with API-level exactly-once
-  behavior when an `idempotencyKey` is provided. A retry with the same key must
-  return the original result and must not create another transfer, mutate wallet
-  balances again, or add duplicate ledger entries.
+The service must support wallet-to-wallet transfers with API-level exactly-once
+behavior. `POST /transfers` requires an `idempotencyKey`; a retry with the same
+key must return the original result and must not create another transfer, mutate
+wallet balances again, or add duplicate ledger entries.
 
   Correctness is the main evaluation target. The implementation should prove that:
 
@@ -71,8 +71,8 @@
 
   Expected error cases:
 
-  - `400 Bad Request` for invalid JSON, missing wallet ids, same source and
-    destination wallet, or non-positive amount
+- `400 Bad Request` for invalid JSON, missing `idempotencyKey`, missing wallet
+  ids, same source and destination wallet, or non-positive amount
   - `404 Not Found` if either wallet does not exist
   - `409 Conflict` for insufficient funds
   - `422 Unprocessable Entity` if an existing idempotency key is reused with a
@@ -133,12 +133,33 @@
   rows for a transfer. The service will create both rows in the same database
   transaction that updates wallet balances and marks the transfer `PROCESSED`.
 
-  ## Idempotency Strategy
+## Idempotency Strategy
 
-  The idempotency key is stored on `transfers` with a unique database constraint.
-  The normalized request is hashed and stored as `request_hash`.
+The idempotency key is required for every transfer request and is stored on
+`transfers` with a non-null unique database constraint. The normalized request is
+hashed and stored as `request_hash`.
 
-  Flow:
+The request hash is calculated from the transfer intent, not from the raw JSON
+body. This avoids false mismatches caused by JSON field order, whitespace, or
+formatting differences.
+
+Canonical hash input:
+
+```text
+fromWalletId=<fromWalletId>|toWalletId=<toWalletId>|amount=<amount>
+```
+
+Rules:
+
+- include `fromWalletId`, `toWalletId`, and `amount`
+- exclude `idempotencyKey` because it is the lookup key, not part of the transfer
+  intent
+- trim wallet ids during validation before hashing
+- represent `amount` as a base-10 integer minor-unit string
+- hash the canonical string with SHA-256
+- store the lowercase hex-encoded digest in `request_hash`
+
+Flow:
 
   1. Begin one database transaction.
   2. Try to insert a `PENDING` transfer with the idempotency key and request hash.
