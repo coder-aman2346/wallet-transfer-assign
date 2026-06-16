@@ -115,7 +115,7 @@ public class TransferRepository {
         return updateTransferState(transferId, TransferState.FAILED, reason);
     }
 
-    private Optional<Transfer> findById(UUID transferId) {
+    public Optional<Transfer> findById(UUID transferId) {
         return jdbcTemplate.query(
                         """
                                 select id, idempotency_key, request_hash, from_wallet_id, to_wallet_id,
@@ -125,6 +125,19 @@ public class TransferRepository {
                                 """,
                         this::mapTransfer,
                         transferId)
+                .stream()
+                .findFirst();
+    }
+
+    public Optional<Wallet> findWalletById(String walletId) {
+        return jdbcTemplate.query(
+                        """
+                                select id, balance
+                                from wallets
+                                where id = ?
+                                """,
+                        this::mapWallet,
+                        walletId)
                 .stream()
                 .findFirst();
     }

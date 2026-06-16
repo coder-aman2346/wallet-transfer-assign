@@ -330,3 +330,77 @@ Flow:
   - PostgreSQL-specific row locking is acceptable because PostgreSQL is the
     preferred database in the assignment.
   - Spring JDBC is chosen to keep transaction and locking behavior explicit.
+
+  ## Day 2 Execution Notes
+
+  Day 2 completed on Tuesday, June 16, 2026.
+
+  ### What was implemented
+
+  #### 1. `pom.xml` fix
+  The Day 1 pom.xml referenced four non-existent Spring Boot test starter artifacts
+  (`spring-boot-starter-flyway-test`, etc.). These were replaced with the standard
+  `spring-boot-starter-test` which bundles JUnit 5, AssertJ, and MockMvc support.
+  `org.testcontainers:postgresql` was added for the concurrency integration test.
+
+  #### 2. `api` package (HTTP layer)
+
+  Added five files to `src/main/java/.../api`:
+
+  - `TransferRequest.java` — JSON request body record for `POST /transfers`
+  - `TransferResponse.java` — JSON response; `failureReason` is omitted when null
+  - `WalletResponse.java` — JSON response for `GET /wallets/{id}`
+  - `ErrorResponse.java` — uniform error envelope `{ "error": "...", "message": "..." }`
+  - `TransferController.java` — thin `@RestController` with three endpoints:
+    - `POST /transfers` (core, required)
+    - `GET /transfers/{id}` (optional)
+    - `GET /wallets/{id}` (optional)
+  - `GlobalExceptionHandler.java` — `@RestControllerAdvice` mapping:
+    - `InvalidTransferRequestException` → 400
+    - `WalletNotFoundException` → 404
+    - `IdempotencyKeyReuseException` → 422
+    - Unexpected `Exception` → 500
+
+  #### 3. `TransferRepository` extensions
+
+  - `findById` promoted from `private` to `public` (required by `GET /transfers/{id}`)
+  - `findWalletById` added (required by `GET /wallets/{id}`)
+
+  #### 4. Concurrency integration test
+
+  `ConcurrentTransferIntegrationTest` runs against a real PostgreSQL 16 container
+  started by Testcontainers. It fires eight concurrent transfer requests against the
+  same source wallet and asserts the core money invariant:
+
+  ```
+  (processed count × amount) + final source balance == initial balance
+  ```
+
+  Also asserts: no negative balances, target balance == total credited, ledger row
+  count == processed count × 2.
+
+  #### 5. README
+
+  Replaced the template README with full candidate documentation:
+  - How to run locally (Docker + `./mvnw spring-boot:run`)
+  - curl examples for all three endpoints
+  - Test command (`./mvnw -B test`)
+  - Error reference table
+  - AI disclosure section
+
+  ### Key design decisions finalized on Day 2
+
+  **Insufficient funds → 200 + `state=FAILED`, not 409.**
+  A FAILED transfer is a legitimate, idempotently-replayable outcome. Returning 409
+  would mean retries need special handling to distinguish "client error" from
+  "processed before". Returning 200 + FAILED keeps retries simple and safe.
+
+  **No wallet creation API.**
+  Wallet creation is explicitly out of scope. Test fixtures seed wallets directly.
+  This is documented in the README.
+
+  **Testcontainers over MockMvc for concurrency test.**
+  The concurrency test must use real PostgreSQL locking. H2 does not support
+  `SELECT ... FOR UPDATE` with the same semantics. Testcontainers starts a throwaway
+  container that is torn down after the test suite.
+
